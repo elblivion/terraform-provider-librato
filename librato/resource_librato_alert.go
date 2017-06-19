@@ -266,19 +266,15 @@ func resourceLibratoAlertCreate(d *schema.ResourceData, meta interface{}) error 
 	}
 	if v, ok := d.GetOk("attributes"); ok {
 		attributeData := v.([]interface{})
-		if len(attributeData) > 1 {
-			return fmt.Errorf("Only one set of attributes per alert is supported")
-		} else if len(attributeData) == 1 {
-			if attributeData[0] == nil {
-				return fmt.Errorf("No attributes found in attributes block")
-			}
-			attributeDataMap := attributeData[0].(map[string]interface{})
-			attributes := new(librato.AlertAttributes)
-			if v, ok := attributeDataMap["runbook_url"].(string); ok && v != "" {
-				attributes.RunbookURL = librato.String(v)
-			}
-			alert.Attributes = attributes
+		if attributeData[0] == nil {
+			return fmt.Errorf("No attributes found in attributes block")
 		}
+		attributeDataMap := attributeData[0].(map[string]interface{})
+		attributes := new(librato.AlertAttributes)
+		if v, ok := attributeDataMap["runbook_url"].(string); ok && v != "" {
+			attributes.RunbookURL = librato.String(v)
+		}
+		alert.Attributes = attributes
 	}
 
 	alertResult, _, err := client.Alerts.Create(&alert)
