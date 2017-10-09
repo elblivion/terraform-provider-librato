@@ -1,14 +1,12 @@
 package librato
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"math"
 	"strconv"
 	"time"
 
-	"github.com/hashicorp/terraform/helper/hashcode"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/henrikhodne/go-librato/librato"
@@ -25,13 +23,17 @@ func resourceLibratoAlert() *schema.Resource {
 			"name": {
 				Type:     schema.TypeString,
 				Required: true,
-				ForceNew: false,
 			},
 			"description": {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
 			"active": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  true,
+			},
+			"md": {
 				Type:     schema.TypeBool,
 				Optional: true,
 				Default:  true,
@@ -45,10 +47,9 @@ func resourceLibratoAlert() *schema.Resource {
 				Type:     schema.TypeSet,
 				Optional: true,
 				Elem:     &schema.Schema{Type: schema.TypeString},
-				Set:      schema.HashString,
 			},
 			"condition": {
-				Type:     schema.TypeSet,
+				Type:     schema.TypeList,
 				Optional: true,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
@@ -65,9 +66,8 @@ func resourceLibratoAlert() *schema.Resource {
 							Optional: true,
 						},
 						"tag": &schema.Schema{
-							Type:     schema.TypeSet,
+							Type:     schema.TypeList,
 							Optional: true,
-							//Set:      resourceLibratoAlertTagsHash,
 							Elem: &schema.Resource{
 								Schema: map[string]*schema.Schema{
 									"name": {
@@ -80,11 +80,9 @@ func resourceLibratoAlert() *schema.Resource {
 										Default:  false,
 									},
 									"values": {
-										Type:     schema.TypeList,
-										Required: true,
-										Elem: &schema.Schema{
-											Type: schema.TypeString,
-										},
+										Type:     schema.TypeSet,
+										Optional: true,
+										Elem:     &schema.Schema{Type: schema.TypeString},
 									},
 								},
 							},
@@ -107,7 +105,6 @@ func resourceLibratoAlert() *schema.Resource {
 						},
 					},
 				},
-				Set: resourceLibratoAlertConditionsHash,
 			},
 			"attributes": {
 				Type:     schema.TypeList,
@@ -126,166 +123,49 @@ func resourceLibratoAlert() *schema.Resource {
 	}
 }
 
-func resourceLibratoAlertConditionsHash(v interface{}) int {
-	var buf bytes.Buffer
-	m := v.(map[string]interface{})
-	buf.WriteString(fmt.Sprintf("%s-", m["type"].(string)))
-	buf.WriteString(fmt.Sprintf("%s-", m["metric_name"].(string)))
-
-	source, present := m["source"]
-	if present {
-		buf.WriteString(fmt.Sprintf("%s-", source.(string)))
-	}
-
-	detectReset, present := m["detect_reset"]
-	if present {
-		buf.WriteString(fmt.Sprintf("%t-", detectReset.(bool)))
-	}
-
-	duration, present := m["duration"]
-	if present {
-		buf.WriteString(fmt.Sprintf("%d-", duration.(int)))
-	}
-
-	threshold, present := m["threshold"]
-	if present {
-		buf.WriteString(fmt.Sprintf("%f-", threshold.(float64)))
-	}
-
-	summaryFunction, present := m["summary_function"]
-	if present {
-		buf.WriteString(fmt.Sprintf("%s-", summaryFunction.(string)))
-	}
-
-	tags, present := m["tag"].([]interface{})
-	if present {
-		for _, t := range tags {
-			buf.WriteString(fmt.Sprintf("%d-", resourceLibratoAlertTagsHash(t)))
-		}
-	}
-
-	return hashcode.String(buf.String())
-}
-
-func resourceLibratoAlertTagsHash(v interface{}) int {
-	var buf bytes.Buffer
-	m := v.(map[string]interface{})
-	buf.WriteString(fmt.Sprintf("%s-", m["name"].(string)))
-
-	grouped, present := m["grouped"]
-	if present {
-		buf.WriteString(fmt.Sprintf("%t-", grouped.(bool)))
-	}
-
-	values := m["values"].([]interface{})
-	for _, v := range values {
-		buf.WriteString(fmt.Sprintf("%s-", v.(string)))
-	}
-
-	return hashcode.String(buf.String())
-}
-
 func resourceLibratoAlertCreate(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*librato.Client)
 
-	alert := librato.Alert{
-		Name: librato.String(d.Get("name").(string)),
+	alert := &librato.Alert{
+		Name:   librato.String(d.Get("name").(string)),
+		Active: librato.Bool(d.Get("active").(bool)),
+		Md:     librato.Bool(d.Get("md").(bool)),
 	}
+
 	if v, ok := d.GetOk("description"); ok {
 		alert.Description = librato.String(v.(string))
 	}
-	// GetOK returns not OK for false boolean values, use Get
-	alert.Active = librato.Bool(d.Get("active").(bool))
 	if v, ok := d.GetOk("rearm_seconds"); ok {
 		alert.RearmSeconds = librato.Uint(uint(v.(int)))
 	}
 	if v, ok := d.GetOk("services"); ok {
-		vs := v.(*schema.Set)
-		services := make([]*string, vs.Len())
-		for i, serviceData := range vs.List() {
-			services[i] = librato.String(serviceData.(string))
+		services := []interface{}{}
+		for _, serviceData := range v.(*schema.Set).List() {
+			serviceID, _ := strconv.Atoi(serviceData.(string))
+			services = append(services, serviceID)
 		}
 		alert.Services = services
 	}
 	if v, ok := d.GetOk("condition"); ok {
-		vs := v.(*schema.Set)
-		conditions := make([]librato.AlertCondition, vs.Len())
-		for i, conditionDataM := range vs.List() {
-			conditionData := conditionDataM.(map[string]interface{})
-			var condition librato.AlertCondition
-			if v, ok := conditionData["type"].(string); ok && v != "" {
-				condition.Type = librato.String(v)
-			}
-			if v, ok := conditionData["threshold"].(float64); ok && !math.IsNaN(v) {
-				condition.Threshold = librato.Float(v)
-			}
-			if v, ok := conditionData["metric_name"].(string); ok && v != "" {
-				condition.MetricName = librato.String(v)
-			}
-			if v, ok := conditionData["source"].(string); ok && v != "" {
-				condition.Source = librato.String(v)
-			}
-			if v, ok := conditionData["detect_reset"].(bool); ok {
-				condition.DetectReset = librato.Bool(v)
-			}
-			if v, ok := conditionData["duration"].(int); ok {
-				condition.Duration = librato.Uint(uint(v))
-			}
-			if v, ok := conditionData["summary_function"].(string); ok && v != "" {
-				condition.SummaryFunction = librato.String(v)
-			}
-			if v, ok := conditionData["tag"]; ok {
-				fmt.Println("[DEBUG] creating tags")
-
-				vs := v.(*schema.Set)
-				tags := make([]librato.AlertConditionTagSet, vs.Len())
-				for i, tagSetDataM := range vs.List() {
-					tagSetData := tagSetDataM.(map[string]interface{})
-					var tag librato.AlertConditionTagSet
-					if v, ok := tagSetData["name"].(string); ok && v != "" {
-						tag.Name = librato.String(v)
-					}
-					if v, ok := tagSetData["grouped"].(bool); ok {
-						tag.Grouped = librato.Bool(v)
-					}
-					if v, ok := tagSetData["values"]; ok {
-						vs := v.([]interface{})
-						values := make([]*string, len(vs))
-						for i, valueData := range vs {
-							values[i] = librato.String(valueData.(string))
-						}
-						tag.Values = values
-					}
-					tags[i] = tag
-				}
-				condition.Tags = tags
-			}
-			conditions[i] = condition
+		conditions := make([]librato.AlertCondition, len(v.([]interface{})))
+		for i, d := range v.([]interface{}) {
+			conditions[i] = expandAlertCondition(d)
 		}
 		alert.Conditions = conditions
 	}
 	if v, ok := d.GetOk("attributes"); ok {
-		attributeData := v.([]interface{})
-		if attributeData[0] == nil {
-			return fmt.Errorf("No attributes found in attributes block")
-		}
-		attributeDataMap := attributeData[0].(map[string]interface{})
-		attributes := new(librato.AlertAttributes)
-		if v, ok := attributeDataMap["runbook_url"].(string); ok && v != "" {
-			attributes.RunbookURL = librato.String(v)
-		}
-		alert.Attributes = attributes
+		alert.Attributes = expandAlertAttributes(v.([]interface{}))
 	}
 
-	alertResult, _, err := client.Alerts.Create(&alert)
+	log.Printf("[INFO] Creating new alert: %#v", alert)
 
+	alertRes, _, err := client.Alerts.Create(alert)
 	if err != nil {
 		return fmt.Errorf("Error creating Librato alert %s: %s", *alert.Name, err)
 	}
-	log.Printf("[INFO] Created Librato alert: %s", *alertResult)
 
 	retryErr := resource.Retry(1*time.Minute, func() *resource.RetryError {
-		_, _, err := client.Alerts.Get(*alertResult.ID)
+		_, _, err := client.Alerts.Get(*alertRes.ID)
 		if err != nil {
 			if errResp, ok := err.(*librato.ErrorResponse); ok && errResp.Response.StatusCode == 404 {
 				return resource.RetryableError(err)
@@ -298,151 +178,67 @@ func resourceLibratoAlertCreate(d *schema.ResourceData, meta interface{}) error 
 		return fmt.Errorf("Error creating librato alert: %s", err)
 	}
 
-	d.SetId(strconv.FormatUint(uint64(*alertResult.ID), 10))
-
+	d.SetId(strconv.FormatUint(uint64(*alertRes.ID), 10))
 	return resourceLibratoAlertRead(d, meta)
 }
 
 func resourceLibratoAlertRead(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*librato.Client)
+
 	id, err := strconv.ParseUint(d.Id(), 10, 0)
 	if err != nil {
 		return err
 	}
 
-	log.Printf("[INFO] Reading Librato Alert: %d", id)
 	alert, _, err := client.Alerts.Get(uint(id))
+
 	if err != nil {
 		if errResp, ok := err.(*librato.ErrorResponse); ok && errResp.Response.StatusCode == 404 {
 			d.SetId("")
 			return nil
 		}
+
 		return fmt.Errorf("Error reading Librato Alert %s: %s", d.Id(), err)
 	}
-	log.Printf("[INFO] Received Librato Alert: %s", *alert)
 
-	d.Set("name", alert.Name)
+	log.Printf("[INFO] Librato alert read: %#v", alert)
 
+	if err := d.Set("name", *alert.Name); err != nil {
+		return err
+	}
 	if alert.Description != nil {
-		if err := d.Set("description", alert.Description); err != nil {
+		if err := d.Set("description", *alert.Description); err != nil {
 			return err
 		}
 	}
-	if alert.Active != nil {
-		if err := d.Set("active", alert.Active); err != nil {
+	if alert.RearmSeconds != nil && *alert.RearmSeconds != 600 {
+		if err := d.Set("rearm_seconds", *alert.RearmSeconds); err != nil {
 			return err
 		}
 	}
-	if alert.RearmSeconds != nil {
-		if err := d.Set("rearm_seconds", alert.RearmSeconds); err != nil {
-			return err
-		}
+	services := make([]interface{}, 0, len(alert.Services.([]interface{})))
+	for _, s := range alert.Services.([]interface{}) {
+		data := s.(map[string]interface{})
+		services = append(services, fmt.Sprintf("%.f", data["id"]))
 	}
-
-	// Since the following aren't simple terraform types (TypeList), it's best to
-	// catch the error returned from the d.Set() function, and handle accordingly.
-	services := resourceLibratoAlertServicesGather(d, alert.Services.([]interface{}))
 	if err := d.Set("services", schema.NewSet(schema.HashString, services)); err != nil {
 		return err
 	}
-
-	conditions := resourceLibratoAlertConditionsGather(d, alert.Conditions)
-	if err := d.Set("condition", schema.NewSet(resourceLibratoAlertConditionsHash, conditions)); err != nil {
-		return err
+	if len(alert.Conditions) > 0 {
+		conditions := make([]interface{}, len(alert.Conditions))
+		for i, cnd := range alert.Conditions {
+			conditions[i] = flattenCondition(cnd)
+		}
+		if err := d.Set("condition", conditions); err != nil {
+			return err
+		}
 	}
-
-	attributes := resourceLibratoAlertAttributesGather(d, alert.Attributes)
-	if err := d.Set("attributes", attributes); err != nil {
-		return err
+	if alert.Attributes != nil {
+		if err := d.Set("attributes", flattenAttributes(alert.Attributes)); err != nil {
+			return err
+		}
 	}
-
 	return nil
-}
-
-func resourceLibratoAlertConditionTagSetGather(d *schema.ResourceData, tags []librato.AlertConditionTagSet) []map[string]interface{} {
-	retTags := make([]map[string]interface{}, 0, len(tags))
-
-	for _, t := range tags {
-		tag := make(map[string]interface{})
-		if t.Name != nil {
-			tag["name"] = *t.Name
-		}
-		if t.Grouped != nil {
-			tag["grouped"] = *t.Grouped
-		}
-		if t.Values != nil {
-			vs := t.Values
-			values := make([]string, 0, len(vs))
-			for _, v := range vs {
-				values = append(values, *v)
-			}
-			tag["values"] = values
-		}
-		retTags = append(retTags, tag)
-	}
-
-	return retTags
-}
-
-func resourceLibratoAlertServicesGather(d *schema.ResourceData, services []interface{}) []interface{} {
-	retServices := make([]interface{}, 0, len(services))
-
-	for _, s := range services {
-		serviceData := s.(map[string]interface{})
-		// ID field is returned as float64, for whatever reason
-		retServices = append(retServices, fmt.Sprintf("%.f", serviceData["id"]))
-	}
-
-	return retServices
-}
-
-func resourceLibratoAlertConditionsGather(d *schema.ResourceData, conditions []librato.AlertCondition) []interface{} {
-	retConditions := make([]interface{}, 0, len(conditions))
-	for _, c := range conditions {
-		condition := make(map[string]interface{})
-		if c.Type != nil {
-			condition["type"] = *c.Type
-		}
-		if c.Threshold != nil {
-			condition["threshold"] = *c.Threshold
-		}
-		if c.MetricName != nil {
-			condition["metric_name"] = *c.MetricName
-		}
-		if c.Source != nil {
-			condition["source"] = *c.Source
-		}
-		if c.Tags != nil {
-			condition["tag"] = resourceLibratoAlertConditionTagSetGather(d, c.Tags)
-		}
-		if c.DetectReset != nil {
-			condition["detect_reset"] = *c.MetricName
-		}
-		if c.Duration != nil {
-			condition["duration"] = int(*c.Duration)
-		}
-		if c.SummaryFunction != nil {
-			condition["summary_function"] = *c.SummaryFunction
-		}
-		retConditions = append(retConditions, condition)
-	}
-
-	return retConditions
-}
-
-// Flattens an attributes hash into something that flatmap.Flatten() can handle
-func resourceLibratoAlertAttributesGather(d *schema.ResourceData, attributes *librato.AlertAttributes) []map[string]interface{} {
-	result := make([]map[string]interface{}, 0, 1)
-
-	if attributes != nil {
-		retAttributes := make(map[string]interface{})
-		if attributes.RunbookURL != nil {
-			retAttributes["runbook_url"] = *attributes.RunbookURL
-		}
-		result = append(result, retAttributes)
-	}
-
-	return result
 }
 
 func resourceLibratoAlertUpdate(d *schema.ResourceData, meta interface{}) error {
@@ -453,76 +249,49 @@ func resourceLibratoAlertUpdate(d *schema.ResourceData, meta interface{}) error 
 		return err
 	}
 
-	alert := new(librato.Alert)
-	alert.Name = librato.String(d.Get("name").(string))
+	alert := librato.Alert{
+		Name:   librato.String(d.Get("name").(string)),
+		Active: librato.Bool(d.Get("active").(bool)),
+		Md:     librato.Bool(d.Get("md").(bool)),
+	}
 
 	if d.HasChange("description") {
 		alert.Description = librato.String(d.Get("description").(string))
-	}
-	if d.HasChange("active") {
-		alert.Active = librato.Bool(d.Get("active").(bool))
 	}
 	if d.HasChange("rearm_seconds") {
 		alert.RearmSeconds = librato.Uint(uint(d.Get("rearm_seconds").(int)))
 	}
 	if d.HasChange("services") {
-		vs := d.Get("services").(*schema.Set)
-		services := make([]*string, vs.Len())
-		for i, serviceData := range vs.List() {
-			services[i] = librato.String(serviceData.(string))
+		vs := d.Get("services").(*schema.Set).List()
+		services := make([]*int, len(vs))
+		for i, d := range vs {
+			serviceID, err := strconv.Atoi(d.(string))
+			if err == nil {
+				services[i] = librato.Int(serviceID)
+			}
 		}
 		alert.Services = services
 	}
-
-	vs := d.Get("condition").(*schema.Set)
-	conditions := make([]librato.AlertCondition, vs.Len())
-	for i, conditionDataM := range vs.List() {
-		conditionData := conditionDataM.(map[string]interface{})
-		var condition librato.AlertCondition
-		if v, ok := conditionData["type"].(string); ok && v != "" {
-			condition.Type = librato.String(v)
+	if d.HasChange("condition") {
+		vs := d.Get("condition").([]interface{})
+		conditions := make([]librato.AlertCondition, len(vs))
+		for i, d := range vs {
+			conditions[i] = expandAlertCondition(d)
 		}
-		if v, ok := conditionData["threshold"].(float64); ok && !math.IsNaN(v) {
-			condition.Threshold = librato.Float(v)
-		}
-		if v, ok := conditionData["metric_name"].(string); ok && v != "" {
-			condition.MetricName = librato.String(v)
-		}
-		if v, ok := conditionData["source"].(string); ok && v != "" {
-			condition.Source = librato.String(v)
-		}
-		if v, ok := conditionData["detect_reset"].(bool); ok {
-			condition.DetectReset = librato.Bool(v)
-		}
-		if v, ok := conditionData["duration"].(int); ok {
-			condition.Duration = librato.Uint(uint(v))
-		}
-		if v, ok := conditionData["summary_function"].(string); ok && v != "" {
-			condition.SummaryFunction = librato.String(v)
-		}
-		conditions[i] = condition
 		alert.Conditions = conditions
 	}
 	if d.HasChange("attributes") {
-		attributeData := d.Get("attributes").([]interface{})
-		if attributeData[0] == nil {
-			return fmt.Errorf("No attributes found in attributes block")
-		}
-		attributeDataMap := attributeData[0].(map[string]interface{})
-		attributes := new(librato.AlertAttributes)
-		if v, ok := attributeDataMap["runbook_url"].(string); ok && v != "" {
-			attributes.RunbookURL = librato.String(v)
-		}
-		alert.Attributes = attributes
+		alert.Attributes = expandAlertAttributes(d.Get("attributes").([]interface{}))
 	}
 
-	log.Printf("[INFO] Updating Librato alert: %s", alert)
-	_, updErr := client.Alerts.Update(uint(id), alert)
+	log.Printf("[INFO] Updating Librato alert: %#v", alert)
+
+	_, updErr := client.Alerts.Update(uint(id), &alert)
 	if updErr != nil {
 		return fmt.Errorf("Error updating Librato alert: %s", updErr)
 	}
 
-	log.Printf("[INFO] Updated Librato alert %d", id)
+	log.Printf("[INFO] Updated Librato alert %#v", alert)
 
 	// Wait for propagation since Librato updates are eventually consistent
 	wait := resource.StateChangeConf{
@@ -533,10 +302,13 @@ func resourceLibratoAlertUpdate(d *schema.ResourceData, meta interface{}) error 
 		ContinuousTargetOccurence: 5,
 		Refresh: func() (interface{}, string, error) {
 			log.Printf("[DEBUG] Checking if Librato Alert %d was updated yet", id)
+
 			changedAlert, _, getErr := client.Alerts.Get(uint(id))
 			if getErr != nil {
 				return changedAlert, "", getErr
 			}
+
+			log.Printf("[INFO] Updated alert: %#v", changedAlert)
 			return changedAlert, "true", nil
 		},
 	}
@@ -551,12 +323,14 @@ func resourceLibratoAlertUpdate(d *schema.ResourceData, meta interface{}) error 
 
 func resourceLibratoAlertDelete(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*librato.Client)
+
 	id, err := strconv.ParseUint(d.Id(), 10, 0)
 	if err != nil {
 		return err
 	}
 
 	log.Printf("[INFO] Deleting Alert: %d", id)
+
 	_, err = client.Alerts.Delete(uint(id))
 	if err != nil {
 		return fmt.Errorf("Error deleting Alert: %s", err)
@@ -577,4 +351,134 @@ func resourceLibratoAlertDelete(d *schema.ResourceData, meta interface{}) error 
 	}
 
 	return nil
+}
+
+// Expanders
+
+func expandAlertCondition(in interface{}) librato.AlertCondition {
+	condition := librato.AlertCondition{}
+	m := in.(map[string]interface{})
+	if v, ok := m["type"].(string); ok {
+		condition.Type = librato.String(v)
+	}
+	if v, ok := m["metric_name"].(string); ok && len(v) > 0 {
+		condition.MetricName = librato.String(v)
+	}
+	if v, ok := m["source"].(string); ok && len(v) > 0 {
+		condition.Source = librato.String(v)
+	}
+	if v, ok := m["detect_reset"].(bool); ok {
+		condition.DetectReset = librato.Bool(v)
+	}
+	if v, ok := m["duration"].(int); ok {
+		condition.Duration = librato.Uint(uint(v))
+	}
+	if v, ok := m["summary_function"].(string); ok {
+		condition.SummaryFunction = librato.String(v)
+	}
+	if v, ok := m["threshold"].(float64); ok && !math.IsNaN(v) {
+		condition.Threshold = librato.Float(v)
+	}
+	if v, ok := m["tag"].([]interface{}); ok && len(v) > 0 {
+		tags := make([]librato.AlertConditionTagSet, len(v))
+		for i, t := range v {
+			tags[i] = expandAlertConditionTagSet(t)
+		}
+		condition.Tags = tags
+	}
+	return condition
+}
+
+func expandAlertConditionTagSet(in interface{}) librato.AlertConditionTagSet {
+	tag := librato.AlertConditionTagSet{}
+	m := in.(map[string]interface{})
+	if v, ok := m["name"].(string); ok {
+		tag.Name = librato.String(v)
+	}
+	if v, ok := m["grouped"].(bool); ok {
+		tag.Grouped = librato.Bool(v)
+	}
+	if v, ok := m["values"]; ok {
+		setList := v.(*schema.Set).List()
+		values := make([]*string, len(setList))
+		for i, value := range setList {
+			values[i] = librato.String(value.(string))
+		}
+		tag.Values = values
+	}
+	return tag
+}
+
+func expandAlertAttributes(in []interface{}) *librato.AlertAttributes {
+	if len(in) == 0 || in[0] == nil {
+		return &librato.AlertAttributes{}
+	}
+
+	attr := &librato.AlertAttributes{}
+	m := in[0].(map[string]interface{})
+	if v, ok := m["runbook_url"].(string); ok {
+		attr.RunbookURL = librato.String(v)
+	}
+	return attr
+}
+
+// Flatteners
+
+func flattenCondition(condition librato.AlertCondition) interface{} {
+	m := make(map[string]interface{}, 0)
+	if condition.Type != nil {
+		m["type"] = *condition.Type
+	}
+	if condition.MetricName != nil {
+		m["metric_name"] = *condition.MetricName
+	}
+	if condition.Source != nil {
+		m["source"] = *condition.Source
+	}
+	if condition.DetectReset != nil {
+		m["detect_reset"] = *condition.DetectReset
+	}
+	if condition.Threshold != nil {
+		m["threshold"] = *condition.Threshold
+	}
+	if condition.SummaryFunction != nil {
+		m["summary_function"] = *condition.SummaryFunction
+	}
+	if condition.Duration != nil {
+		m["duration"] = *condition.Duration
+	}
+	if len(condition.Tags) > 0 {
+		flattenedTags := make([]interface{}, len(condition.Tags))
+		for i, tag := range condition.Tags {
+			flattenedTags[i] = flattenTagsReferance(tag)
+		}
+		m["tag"] = flattenedTags
+	}
+	return m
+}
+
+func flattenTagsReferance(tag librato.AlertConditionTagSet) interface{} {
+	m := make(map[string]interface{}, 0)
+	if tag.Name != nil {
+		m["name"] = *tag.Name
+	}
+	if tag.Grouped != nil {
+		m["grouped"] = *tag.Grouped
+	}
+	if len(tag.Values) > 0 {
+		values := make([]interface{}, len(tag.Values))
+		for i, value := range tag.Values {
+			values[i] = *value
+		}
+		m["values"] = schema.NewSet(schema.HashString, values)
+	}
+	return m
+}
+
+func flattenAttributes(attr *librato.AlertAttributes) []interface{} {
+	m := make(map[string]interface{}, 0)
+	if attr.RunbookURL != nil {
+		m["runbook_url"] = *attr.RunbookURL
+	}
+	return []interface{}{m}
 }
