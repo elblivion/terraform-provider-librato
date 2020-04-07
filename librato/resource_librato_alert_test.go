@@ -253,7 +253,7 @@ func testAccCheckLibratoAlert(alert *librato.Alert) resource.TestCheckFunc {
 		}
 
 		if *condition.Threshold != 10 {
-			return fmt.Errorf("Bad condition.threshold: %d", *condition.Threshold)
+			return fmt.Errorf("Bad condition.threshold: %f", *condition.Threshold)
 		}
 
 		if *condition.Duration != 600 {
@@ -347,7 +347,7 @@ func testAccCheckLibratoAlertUpdate(alert *librato.Alert) resource.TestCheckFunc
 		}
 
 		if *condition.Threshold != 9 {
-			return fmt.Errorf("Bad condition.threshold: %d", *condition.Threshold)
+			return fmt.Errorf("Bad condition.threshold: %f", *condition.Threshold)
 		}
 
 		if *condition.Duration != 60 {
