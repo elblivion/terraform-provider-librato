@@ -24,10 +24,6 @@ func resourceLibratoSpace() *schema.Resource {
 				Required: true,
 				ForceNew: false,
 			},
-			"id": {
-				Type:     schema.TypeInt,
-				Computed: true,
-			},
 		},
 	}
 }
@@ -53,6 +49,7 @@ func resourceLibratoSpaceCreate(d *schema.ResourceData, meta interface{}) error 
 		return nil
 	})
 
+	d.SetId(strconv.FormatUint(uint64(*space.ID), 10))
 	return resourceLibratoSpaceReadResult(d, space)
 }
 
@@ -78,9 +75,6 @@ func resourceLibratoSpaceRead(d *schema.ResourceData, meta interface{}) error {
 
 func resourceLibratoSpaceReadResult(d *schema.ResourceData, space *librato.Space) error {
 	d.SetId(strconv.FormatUint(uint64(*space.ID), 10))
-	if err := d.Set("id", *space.ID); err != nil {
-		return err
-	}
 	if err := d.Set("name", *space.Name); err != nil {
 		return err
 	}
