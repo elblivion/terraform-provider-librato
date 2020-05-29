@@ -281,7 +281,25 @@ func resourceLibratoAlertUpdate(d *schema.ResourceData, meta interface{}) error 
 		alert.Conditions = conditions
 	}
 	if d.HasChange("attributes") {
-		alert.Attributes = expandAlertAttributes(d.Get("attributes").([]interface{}))
+		v, ok := d.GetOk("attributes")
+
+		// If no attributes are defined, just set to empty attributes.
+		if !ok {
+			alert.Attributes = &librato.AlertAttributes{
+				RunbookURL: librato.String(""),
+			}
+		} else {
+			attributeData := v.([]interface{})
+			if attributeData[0] == nil {
+				return fmt.Errorf("No attributes found in attributes block")
+			}
+			attributeDataMap := attributeData[0].(map[string]interface{})
+			attributes := new(librato.AlertAttributes)
+			if v, ok := attributeDataMap["runbook_url"].(string); ok && v != "" {
+				attributes.RunbookURL = librato.String(v)
+			}
+			alert.Attributes = attributes
+		}
 	}
 
 	log.Printf("[INFO] Updating Librato alert: %#v", alert)
