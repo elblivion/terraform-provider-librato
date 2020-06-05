@@ -75,10 +75,6 @@ func resourceLibratoMetric() *schema.Resource {
 							Optional: true,
 							Default:  false,
 						},
-						"created_by_ua": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
 						"gap_detection": {
 							Type:     schema.TypeBool,
 							Optional: true,
@@ -134,9 +130,6 @@ func resourceLibratoMetricCreate(d *schema.ResourceData, meta interface{}) error
 		}
 		if v, ok := attributeDataMap["display_units_short"].(string); ok && v != "" {
 			attributes.DisplayUnitsShort = *librato.String(v)
-		}
-		if v, ok := attributeDataMap["created_by_ua"].(string); ok && v != "" {
-			attributes.CreatedByUA = *librato.String(v)
 		}
 		if v, ok := attributeDataMap["display_stacked"].(bool); ok {
 			attributes.DisplayStacked = *librato.Bool(v)
@@ -263,9 +256,6 @@ func resourceLibratoMetricUpdate(d *schema.ResourceData, meta interface{}) error
 		if v, ok := attributeDataMap["display_units_short"].(string); ok && v != "" {
 			attributes.DisplayUnitsShort = *librato.String(v)
 		}
-		if v, ok := attributeDataMap["created_by_ua"].(string); ok && v != "" {
-			attributes.CreatedByUA = *librato.String(v)
-		}
 		if v, ok := attributeDataMap["display_stacked"].(bool); ok {
 			attributes.DisplayStacked = *librato.Bool(v)
 		}
@@ -368,9 +358,6 @@ func metricAttributesGather(d *schema.ResourceData, attributes *librato.MetricAt
 		}
 		if attributes.DisplayUnitsShort != "" {
 			retAttributes["display_units_short"] = attributes.DisplayUnitsShort
-		}
-		if attributes.CreatedByUA != "" {
-			retAttributes["created_by_ua"] = attributes.CreatedByUA
 		}
 		retAttributes["display_stacked"] = attributes.DisplayStacked || false
 		retAttributes["gap_detection"] = attributes.GapDetection || false
