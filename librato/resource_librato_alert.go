@@ -289,14 +289,15 @@ func resourceLibratoAlertUpdate(d *schema.ResourceData, meta interface{}) error 
 				RunbookURL: librato.String(""),
 			}
 		} else {
-			attributeData := v.([]interface{})
-			if attributeData[0] == nil {
+			attributeData, ok := v.([]interface{})
+			if !ok || attributeData[0] == nil {
 				return fmt.Errorf("No attributes found in attributes block")
 			}
-			attributeDataMap := attributeData[0].(map[string]interface{})
 			attributes := new(librato.AlertAttributes)
-			if v, ok := attributeDataMap["runbook_url"].(string); ok && v != "" {
-				attributes.RunbookURL = librato.String(v)
+			if attributeDataMap, ok := attributeData[0].(map[string]interface{}); ok && attributeDataMap != nil {
+				if v, ok := attributeDataMap["runbook_url"].(string); ok && v != "" {
+					attributes.RunbookURL = librato.String(v)
+				}
 			}
 			alert.Attributes = attributes
 		}
@@ -433,9 +434,10 @@ func expandAlertAttributes(in []interface{}) *librato.AlertAttributes {
 	}
 
 	attr := &librato.AlertAttributes{}
-	m := in[0].(map[string]interface{})
-	if v, ok := m["runbook_url"].(string); ok {
-		attr.RunbookURL = librato.String(v)
+	if m, ok := in[0].(map[string]interface{}); ok {
+		if v, ok := m["runbook_url"].(string); ok {
+			attr.RunbookURL = librato.String(v)
+		}
 	}
 	return attr
 }
